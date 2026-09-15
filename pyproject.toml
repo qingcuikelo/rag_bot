@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xingchi-rag"
+version = "0.1.0"
+description = "星驰科技 RAG 智能客服（LangChain + LangGraph）"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = { text = "Proprietary" }
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# ============================================================
+# Ruff：lint + format
+# ============================================================
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "scripts", "eval"]
+extend-exclude = ["data", "docs", "storage", ".venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
+# 项目为中文语境，全角标点属有意为之；E501 交给 formatter
+ignore = ["E501", "RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+"eval/**" = ["S101"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["xingchi_rag"]
+
+# ============================================================
+# Mypy：静态类型检查
+# ============================================================
+[tool.mypy]
+python_version = "3.11"
+packages = ["xingchi_rag"]
+mypy_path = "src"
+strict = false
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+check_untyped_defs = true
+disallow_untyped_defs = false
+no_implicit_optional = true
+show_error_codes = true
+
+# ============================================================
+# Pytest
+# ============================================================
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+addopts = "-q"
+markers = [
+    "unit: 纯函数/无网络单元测试",
+    "integration: 需要临时目录/组件的集成测试",
+    "eval: 评测相关（可能较慢）",
+]

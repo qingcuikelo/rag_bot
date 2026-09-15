@@ -1,0 +1,100 @@
+# ============================================================
+# 星驰科技 RAG · 数据源治理规则（权威级别 / 时效 / 去重 / PII）
+# 对应文档 §2.3；离线入库前门禁依据本文件。
+# ============================================================
+
+version: 1
+
+# ---------- 权威级别（数值越小越权威，冲突时取值）----------
+authority_rank:
+  10:            # 库存、价格：最权威
+    - 库存清单.tsv
+    - 产品价格与库存.xlsx
+  20:            # 产品参数、保修/退换政策
+    - 产品参数表.csv
+    - 保修政策与退换货说明.txt
+    - 售后服务指南.pdf
+  30:            # 叙述性文本
+    - 2026产品目录.pdf
+    - 产品介绍_星驰智能门锁.txt
+    - 客服FAQ_售前售后.txt
+  40:            # 重复源：仅留痕，不参与回答
+    - 产品参数表.tsv
+  90:            # 可疑来源：参考，不参与回答
+    - 售后工单统计.xlsx
+
+# ---------- 数据域权威来源（结构化字段冲突消解）----------
+domain_authority:
+  库存:
+    sources:
+      - 库存清单.tsv
+      - 产品价格与库存.xlsx        # sheet: 库存分布
+    downgrade:
+      - 产品参数表.csv             # 库存列降级，不参与回答
+    note: 产品参数表库存列与库存清单不一致，以库存清单为准
+  价格:
+    sources:
+      - 产品价格与库存.xlsx
+      - 2026产品目录.pdf
+    note: 零售价一致；出厂价/毛利率以 xlsx 为准
+  产品参数:
+    sources:
+      - 产品参数表.csv
+    cross_check:
+      - 产品介绍_星驰智能门锁.txt
+  保修退换政策:
+    sources:
+      - 保修政策与退换货说明.txt
+      - 售后服务指南.pdf
+  工单:
+    sources:
+      - 售后工单记录.csv
+    excluded:
+      - 售后工单统计.xlsx          # 工单明细 sheet 退化，不采用
+  工单统计:
+    aggregation: realtime          # 由 售后工单记录.csv 实时聚合
+    untrusted:
+      - 售后工单统计.xlsx          # 状态汇总口径不一致，不信任
+
+# ---------- 冲突消解策略 ----------
+conflict_resolution:
+  - 结构化字段冲突 -> 按 domain_authority 取值，回答标注数据更新时间
+  - 文本与表格冲突 -> 表格（结构化）优先于叙述性文本
+  - 无法消解 -> 兜底话术并提示以人工/发票为准
+
+# ---------- 去重规则 ----------
+dedup:
+  # 幂等键：文件名 + 内容 SHA-256
+  key: [source_file, content_sha256]
+  # 事实卡按 (model, field) 去重，保留权威值
+  factcard_key: [product_model, field]
+  ignore_duplicates:
+    - 产品参数表.tsv
+
+# ---------- PII 规则（§2.3.3）----------
+pii:
+  # 不入向量库 / 不入检索索引
+  excluded_from_vector:
+    - 客户信息表.csv
+  sqlite_masking:
+    phone: salted_sha256          # 手机号加盐 SHA-256
+    phone_tail_length: 4          # 另存尾 4 位用于核对
+    name: masked                  # 姓名脱敏，如 张*
+  output:
+    default_hide: [phone, name]   # 默认不回显手机号/姓名
+    require_auth: true            # 客户信息/工单查询需鉴权
+
+# ---------- 入库前质量门禁（§2.3.4）----------
+quality_gates:
+  degenerate_sheet_detection: true   # 检测退化为表头的 sheet 并告警跳过
+  enum_checks:
+    上市状态: [已上市, 预售]
+    状态: [已解决, 处理中, 待客户反馈, 已关闭]
+  cross_source_consistency: true
+  report_path: storage/data_quality_report.json
+
+# ---------- 时效 ----------
+timeliness:
+  default_effective_from_ingest: true   # 缺省取入库时间
+  known_effective_dates:
+    库存分布: "2026-03-31"

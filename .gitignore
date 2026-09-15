@@ -1,0 +1,57 @@
+# ============================================================
+# 星驰科技 RAG 智能客服 · Git 忽略规则
+# 原则：私有数据、密钥、运行时产物一律不入库
+# ============================================================
+
+# ---------- 隐私数据（绝对禁止提交）----------
+data/
+.env
+.env.*
+!.env.example
+
+# ---------- 运行时产物 ----------
+storage/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# ---------- 虚拟环境 ----------
+.venv/
+venv/
+env/
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+pip-wheel-metadata/
+
+# ---------- 工具缓存 ----------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# ---------- 日志 ----------
+*.log
+logs/
+
+# ---------- IDE / 编辑器 ----------
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---------- 临时文件 ----------
+*.tmp
+tmp/
+.cache/

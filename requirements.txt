@@ -1,0 +1,72 @@
+# ============================================================
+# 星驰科技 RAG 智能客服 · Python 依赖清单
+# Python: >=3.11,<3.13
+# 安装: pip install -r requirements.txt
+# 开发主线: LangChain + LangGraph
+# 模型: OpenAI 兼容 API 优先，可切 Ollama / llama.cpp（见"可选"分组）
+# 向量库: Chroma 本地持久化（不组局域网）
+#
+# 版本区间已按 PyPI 实际发布与组件互依赖校正：
+#   langchain-chroma 1.1 依赖 chromadb>=1.5.5 且 langchain-core>=1.4.7
+# ============================================================
+
+# ---------- LangChain / LangGraph 框架 ----------
+langchain>=1.4,<2.0              # Agent(create_agent)、LCEL、Prompt、输出解析
+langchain-core>=1.4.7,<2.0       # 核心抽象（Runnable/Document/Retriever）
+langchain-classic>=1.0,<2.0      # EnsembleRetriever / ContextualCompressionRetriever / CrossEncoderReranker
+langchain-community>=0.4,<0.5    # BM25Retriever、HuggingFaceCrossEncoder、SQLDatabase
+langchain-text-splitters>=1.1,<2.0
+langgraph>=1.2,<2.0              # StateGraph 编排、条件路由
+langgraph-checkpoint-sqlite>=3.0,<4.0  # SqliteSaver 会话检查点持久化
+langsmith>=0.12,<1.0             # 全链路追踪与评测数据集
+
+# ---------- 模型 Provider 集成 ----------
+langchain-openai>=1.6,<2.0       # ChatOpenAI / OpenAIEmbeddings
+langchain-ollama>=1.1,<2.0       # ChatOllama / OllamaEmbeddings（本地兜底）
+langchain-chroma>=1.1,<2.0       # Chroma 向量库集成
+
+# ---------- 重排 / 本机向量 ----------
+# HuggingFaceCrossEncoder 依赖 sentence-transformers；重排是"高准确率"核心链路，故列为必需依赖
+sentence-transformers>=3.0
+
+# ---------- Web 服务 / 接口 / 鉴权 ----------
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+pydantic>=2.7,<3.0
+pydantic-settings>=2.3,<3.0
+python-multipart>=0.0.9
+pyjwt>=2.8,<3.0                  # 会话/客户身份令牌（PII 与工单鉴权）
+
+# ---------- 向量库 / 混合检索 ----------
+chromadb>=1.5.5,<2.0
+rank-bm25>=0.2.2
+jieba>=0.42.1
+
+# ---------- 文档解析 ----------
+pypdf>=4.0                       # PyPDFLoader
+openpyxl>=3.1,<4.0               # 自定义 ExcelDocumentLoader（逐 sheet，跳过退化表）
+
+# ---------- 结构化数据 / Text2SQL 安全校验 ----------
+sqlglot>=30,<31
+
+# ---------- 配置 / 日志 ----------
+python-dotenv>=1.0,<2.0
+loguru>=0.7,<1.0
+
+# ---------- 测试 / 评测 ----------
+pytest>=8.2,<9.0
+pytest-asyncio>=0.23,<1.0
+ragas>=0.4,<0.5                  # LLM-as-Judge 生成质量指标
+
+# ---------- 开发工具（lint / 类型检查，CI 使用） ----------
+ruff>=0.16,<1.0                  # lint / format
+mypy>=2.3,<3.0                   # 静态类型检查
+
+# ============================================================
+# 可选：本地推理运行时（不安装则走云端 API）
+# 按需取消注释；CPU 场景优先 llama.cpp，GPU 场景可用 Ollama。
+# ============================================================
+# ollama>=0.3                 # Ollama 运行时客户端
+# llama-cpp-python>=0.2.90    # llama.cpp Python 绑定（gguf 本地推理）
+# FlagEmbedding>=1.2          # bge-m3 / bge-reranker-v2-m3 官方实现（可选加速）
+# duckdb>=1.0                 # 如需更强分析型 SQL（可选，默认用 SQLite）

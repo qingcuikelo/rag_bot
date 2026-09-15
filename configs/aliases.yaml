@@ -1,0 +1,58 @@
+# ============================================================
+# 星驰科技 RAG · 型号归一化与消歧（§6.2）
+# 用于查询理解阶段把口语化/简写型号映射到规范型号。
+# ============================================================
+
+version: 1
+
+# ---------- 规范型号 ----------
+models:
+  XC-L50:
+    name: 星驰智能门锁 Lite
+    category: 智能门锁
+    aliases: [L50, 门锁lite, 门锁 lite, 智能门锁 lite, 星驰智能门锁 lite, 门锁青春版]
+  XC-L100:
+    name: 星驰智能门锁 Pro
+    category: 智能门锁
+    aliases: [L100, 门锁pro, 门锁 pro, 智能门锁 pro, 星驰智能门锁 pro, 门锁旗舰, 主力款]
+  XC-L200:
+    name: 星驰智能门锁 Max
+    category: 智能门锁
+    aliases: [L200, 门锁max, 门锁 max, 智能门锁 max, 星驰智能门锁 max, 门锁高端款, 旗舰]
+  XC-C50:
+    name: 星驰智能摄像头
+    category: 智能摄像头
+    aliases: [C50, 摄像头, 智能摄像头]
+  XC-C80:
+    name: 星驰智能摄像头 Pro
+    category: 智能摄像头
+    aliases: [C80, 摄像头pro, 摄像头 pro, 智能摄像头 pro]
+  XC-D10:
+    name: 星驰智能门铃
+    category: 智能门铃
+    aliases: [D10, 门铃, 智能门铃]
+  XC-H30:
+    name: 星驰智能网关
+    category: 智能网关
+    aliases: [H30, 网关, 智能网关]
+  XC-S1:
+    name: 星驰门窗传感器
+    category: 智能传感器
+    aliases: [S1, 传感器, 门窗传感器, 智能传感器]
+
+# ---------- 消歧策略 ----------
+disambiguation:
+  # 用户仅说“门锁多少钱”等未指定型号时，不臆测
+  ambiguous_terms:
+    门锁: [XC-L50, XC-L100, XC-L200]
+    摄像头: [XC-C50, XC-C80]
+    智能门锁: [XC-L50, XC-L100, XC-L200]
+  # 未指明型号 -> 返回型号列举或追问
+  on_ambiguous: list_or_ask
+  # 型号不存在（如 XC-L300）-> 明确告知无此型号，杜绝编造
+  on_unknown_model: report_not_found
+
+# ---------- 校验 ----------
+validation:
+  pattern: '^XC-[A-Z]\d{1,3}$'
+  case_insensitive: true
