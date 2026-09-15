@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+import pytest
 from langchain_core.documents import Document
 
+import xingchi_rag.retrieval.rerank as rerank_module
 from xingchi_rag.retrieval.rerank import DashScopeReranker
+
+
+@pytest.fixture(autouse=True)
+def _reset_rerank_breaker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """确保单元测试不受其它测试触发的熔断影响。"""
+    monkeypatch.setattr(rerank_module, "_RERANK_DISABLED", False)
 
 
 class _StubReranker(DashScopeReranker):

@@ -18,6 +18,21 @@ from loguru import logger
 
 from xingchi_rag.config import get_settings
 
+# 重排不可用（额度耗尽/鉴权失败）时的进程级熔断开关
+_RERANK_DISABLED = False
+
+
+def rerank_disabled() -> bool:
+    """重排是否已被熔断（额度耗尽/鉴权失败）。"""
+    return _RERANK_DISABLED
+
+
+def _disable_rerank(reason: str) -> None:
+    global _RERANK_DISABLED
+    if not _RERANK_DISABLED:
+        logger.warning(f"Reranker 已熔断，本次进程内跳过重排: {reason}")
+    _RERANK_DISABLED = True
+
 
 class DashScopeReranker(BaseDocumentCompressor):
     """基于 DashScope 原生 text-rerank 接口的精排压缩器。"""
@@ -40,6 +55,9 @@ class DashScopeReranker(BaseDocumentCompressor):
             return []
 
         subset = list(documents[: self.max_documents])
+        if rerank_disabled():
+            return subset[: self.top_n]
+
         scores = self._score(query, [doc.page_content for doc in subset])
         if scores is None:  # 降级：跳过重排
             return subset[: self.top_n]
@@ -77,7 +95,14 @@ class DashScopeReranker(BaseDocumentCompressor):
             response.raise_for_status()
             results = response.json()["output"]["results"]
         except Exception as exc:  # 网络/限流/解析失败 -> 降级
-            logger.warning(f"Reranker 失败，降级为不重排: {type(exc).__name__} {exc}")
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in {
+                401,
+                403,
+                429,
+            }:
+                _disable_rerank(f"HTTP {exc.response.status_code}")
+            else:
+                logger.warning(f"Reranker 失败，降级为不重排: {type(exc).__name__} {exc}")
             return None
 
         scores = [0.0] * len(texts)
