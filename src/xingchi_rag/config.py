@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     # ---------- Embedding / Rerank ----------
     embed_provider: EmbedProvider = EmbedProvider.OPENAI
     embed_model: str = "text-embedding-3-small"
+    # 部分供应商（如阿里云 Qwen）限制单批 embedding ≤20
+    embed_batch_size: int = 20
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
 
     # ---------- 检索参数 ----------

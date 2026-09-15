@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "xingchi/golden-set.schema.json",
+  "title": "星驰 RAG 金标问答集（golden set）",
+  "type": "object",
+  "required": ["id", "question", "type", "intent", "expected_answer", "gold_source", "split"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "唯一编号，如 G001",
+      "pattern": "^G[0-9]{3,}$"
+    },
+    "question": {
+      "type": "string",
+      "description": "用户问题"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["compare", "spec", "price_stock", "policy", "install", "ticket", "unanswerable", "pii", "chitchat"],
+      "description": "难度/题材分层"
+    },
+    "intent": {
+      "type": "string",
+      "enum": [
+        "product_spec",
+        "price_stock",
+        "policy_warranty",
+        "ticket_order",
+        "install_debug",
+        "faq_general",
+        "chitchat",
+        "unknown"
+      ],
+      "description": "期望路由意图（§6.1）"
+    },
+    "expected_answer": {
+      "type": "string",
+      "description": "期望答案要点"
+    },
+    "gold_source": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "金标来源，形如 `文件名#章节`；无答案类为空数组"
+    },
+    "gold_chunk_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "金标 chunk_id（若已知）；用于精确检索评测"
+    },
+    "split": {
+      "type": "string",
+      "enum": ["dev", "holdout"],
+      "description": "dev 用于回归门禁；holdout 仅阶段验收"
+    }
+  }
+}

@@ -74,7 +74,6 @@ def load_all(
         init_schema(conn)
         counts: dict[str, int] = {}
         for table in (
-            "product",
             "price",
             "inventory",
             "ticket",
@@ -83,6 +82,7 @@ def load_all(
             "sales_monthly",
             "sales_region",
             "sales_summary",
+            "product",
         ):
             conn.execute(f"DELETE FROM {table}")
         counts["product"] = _load_product(conn, base)

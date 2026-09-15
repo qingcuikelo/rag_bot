@@ -19,7 +19,10 @@ from xingchi_rag.ingestion.dispatch import load_directory
 from xingchi_rag.ingestion.factcards import build_factcards
 from xingchi_rag.ingestion.governance import govern, write_quality_report
 from xingchi_rag.ingestion.splitters import split_documents
+from xingchi_rag.retrieval.bm25 import build_bm25_index
+from xingchi_rag.retrieval.store import build_vector_store, collection_name
 from xingchi_rag.sql.load import load_all
+from xingchi_rag.utils.docstore import save_documents
 
 
 def _doc_id_for(source_file: str) -> str:
@@ -27,16 +30,24 @@ def _doc_id_for(source_file: str) -> str:
 
 
 def _ensure_ids(documents: list[Document]) -> list[Document]:
-    """补齐 doc_id 与 chunk_id（幂等）。"""
+    """补齐 doc_id 与 chunk_id，并保证 chunk_id 全局唯一（幂等）。"""
     counters: dict[str, int] = {}
+    seen: set[str] = set()
     for doc in documents:
         source_file = str(doc.metadata.get("source_file", "doc"))
         doc_id = str(doc.metadata.get("doc_id") or _doc_id_for(source_file))
         doc.metadata["doc_id"] = doc_id
-        if not doc.metadata.get("chunk_id"):
+
+        chunk_id = doc.metadata.get("chunk_id")
+        if not chunk_id or chunk_id in seen:
             idx = counters.get(doc_id, 0)
+            chunk_id = f"{doc_id}-{idx:04d}"
+            while chunk_id in seen:
+                idx += 1
+                chunk_id = f"{doc_id}-{idx:04d}"
             counters[doc_id] = idx + 1
-            doc.metadata["chunk_id"] = f"{doc_id}-{idx:04d}"
+            doc.metadata["chunk_id"] = chunk_id
+        seen.add(str(chunk_id))
     return documents
 
 
@@ -51,8 +62,16 @@ def build(
     data_dir: str | Path | None = None,
     db_path: str | Path | None = None,
     report_path: str | Path | None = None,
+    vectorize: bool = True,
 ) -> dict[str, Any]:
-    """执行 Phase 1 全链路，返回摘要。"""
+    """执行离线索引全链路，返回摘要。
+
+    Args:
+        data_dir: 原始数据目录（默认 ``data/``）。
+        db_path: SQLite 路径。
+        report_path: 质量报告路径。
+        vectorize: 是否写入 Chroma 向量库（False 用于离线/无 API 的测试）。
+    """
     settings = get_settings()
     settings.ensure_storage_dirs()
 
@@ -66,6 +85,17 @@ def build(
     text_docs = [d for d in governed.documents if d.metadata.get("vectorize")]
     chunks = split_documents(text_docs)
     chunks = _ensure_ids(chunks + _ensure_ids(fact_docs))
+
+    # BM25 与 parent_store（本地，无需模型）
+    if chunks:
+        build_bm25_index(chunks)
+        parents = [c for c in chunks if c.metadata.get("parent_id")]
+        save_documents(parents, settings.resolve(settings.parent_store_path) / "parents.jsonl")
+
+    # Chroma 向量库（需要 Embedding API）
+    if vectorize:
+        build_vector_store(chunks)
+        logger.info(f"Chroma 写入 {len(chunks)} 个 chunk")
 
     sql_counts = load_all(data_dir=data_dir, db_path=db_path)
 
@@ -82,9 +112,10 @@ def build(
         "corpus_hash": _corpus_hash(chunks),
         "counts": {
             "chunks": len(chunks),
-            "vector_documents": sum(1 for c in chunks if c.metadata.get("vectorize")),
+            "vector_documents": len(chunks) if vectorize else 0,
             **sql_counts,
         },
+        "collection_name": collection_name(),
         "embed_model": settings.embed_model,
         "embed_provider": settings.embed_provider.value,
         "rerank_model": settings.rerank_model,

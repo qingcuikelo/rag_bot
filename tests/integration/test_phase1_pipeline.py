@@ -14,7 +14,7 @@ pytestmark = pytest.mark.integration
 
 
 def test_build_phase1(isolated_storage) -> None:
-    summary = build()
+    summary = build(vectorize=False)
 
     settings = get_settings()
     report_path = settings.resolve(settings.quality_report_path)

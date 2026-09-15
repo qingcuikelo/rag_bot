@@ -79,8 +79,9 @@ def split_recursive(doc: Document) -> list[Document]:
 
 
 def split_documents(documents: list[Document]) -> list[Document]:
-    """按 doc_type 路由切分，并注入 ``chunk_id``。"""
+    """按 doc_type 路由切分，并注入 ``chunk_id``（按 doc_id 累计序号，避免多页冲突）。"""
     result: list[Document] = []
+    offsets: dict[str, int] = {}
     for doc in documents:
         doc_type = str(doc.metadata.get("doc_type", "catalog"))
         if doc_type == "policy":
@@ -90,5 +91,7 @@ def split_documents(documents: list[Document]) -> list[Document]:
         else:
             chunks = split_recursive(doc)
         doc_id = str(doc.metadata.get("doc_id", "doc"))
-        result.extend(_finalize(chunks, doc_id))
+        start = offsets.get(doc_id, 0)
+        result.extend(_finalize(chunks, doc_id, start_index=start))
+        offsets[doc_id] = start + len(chunks)
     return result

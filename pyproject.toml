@@ -35,7 +35,7 @@ ignore = ["E501", "RUF001", "RUF002", "RUF003"]
 "eval/**" = ["S101"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["xingchi_rag"]
+known-first-party = ["xingchi_rag", "eval"]
 
 # ============================================================
 # Mypy：静态类型检查
@@ -60,7 +60,7 @@ show_error_codes = true
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 asyncio_mode = "auto"
 addopts = "-q"
 markers = [
