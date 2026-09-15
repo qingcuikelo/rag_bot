@@ -19,7 +19,6 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 from eval.run import evaluate_retrieval, load_golden  # noqa: E402
 from xingchi_rag.config import get_settings  # noqa: E402
 from xingchi_rag.logging import setup_logging  # noqa: E402
-from xingchi_rag.retrieval.bm25 import get_bm25_retriever  # noqa: E402
 from xingchi_rag.retrieval.factory import get_retriever  # noqa: E402
 from xingchi_rag.utils.docstore import load_documents  # noqa: E402
 
@@ -37,8 +36,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="星驰 RAG 检索评测")
     parser.add_argument("--mode", default="hybrid", choices=["vector", "bm25", "hybrid"])
     parser.add_argument("--split", default="dev", choices=["dev", "holdout", "all"])
-    parser.add_argument("--k", type=int, default=5)
-    parser.add_argument("--top-n", type=int, default=20)
+    parser.add_argument("--k", type=int, default=5, help="指标截断位次（Recall@k）")
+    parser.add_argument("--candidates", type=int, default=20, help="基础检索召回数量")
+    parser.add_argument("--top-n", type=int, default=5, help="重排后保留数量")
+    parser.add_argument("--rerank", action="store_true", help="启用 API 重排")
     parser.add_argument("--gate", type=float, default=0.80, help="Recall@k 门禁阈值")
     parser.add_argument("--out", default=None, help="指标报告输出路径(JSON)")
     args = parser.parse_args()
@@ -46,17 +47,15 @@ def main() -> int:
     records = load_golden(split=None if args.split == "all" else args.split)
     available = _available_files()
 
-    if args.mode == "bm25":
-        retriever = get_bm25_retriever(k=args.top_n)
-    else:
-        retriever = get_retriever(args.mode, k=args.top_n)
+    retriever = get_retriever(args.mode, k=args.candidates, rerank=args.rerank, top_n=args.top_n)
     retrieve_fn = retriever.invoke
 
     report = evaluate_retrieval(
-        retrieve_fn, records, k=args.k, top_n=args.top_n, available_files=available
+        retrieve_fn, records, k=args.k, top_n=args.candidates, available_files=available
     )
 
-    print(f"\n===== 检索评测（mode={args.mode}, split={args.split}, k={args.k}）=====")
+    mode_label = f"{args.mode}{'+rerank' if args.rerank else ''}"
+    print(f"\n===== 检索评测（mode={mode_label}, split={args.split}, k={args.k}）=====")
     print(f"可用问题: {report['usable_questions']}  跳过: {report['skipped_questions']}")
     for name, value in report["metrics"].items():
         print(f"  {name:14s}: {value:.4f}")

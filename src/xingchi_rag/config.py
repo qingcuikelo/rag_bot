@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     # 部分供应商（如阿里云 Qwen）限制单批 embedding ≤20
     embed_batch_size: int = 20
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    # API 重排端点（默认阿里云 DashScope 原生 text-rerank）
+    rerank_endpoint: str = (
+        "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    )
+    rerank_max_documents: int = 20
 
     # ---------- 检索参数 ----------
     retrieve_k: int = 20

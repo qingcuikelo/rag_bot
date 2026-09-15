@@ -34,10 +34,20 @@ def test_retrieval_recall(isolated_storage) -> None:
     assert bm25_docs
 
     records = load_golden(split="dev")
-    retriever = get_retriever("hybrid", k=20)
-    report = evaluate_retrieval(
-        retriever.invoke, records, k=5, top_n=20, available_files=_available_files()
+    available = _available_files()
+
+    hybrid = get_retriever("hybrid", k=20)
+    base_report = evaluate_retrieval(
+        hybrid.invoke, records, k=5, top_n=20, available_files=available
     )
-    assert report["usable_questions"] > 0
+    assert base_report["usable_questions"] > 0
     # P2 门禁：Recall@5 ≥ 0.80
-    assert report["metrics"]["recall@k"] >= 0.80
+    assert base_report["metrics"]["recall@k"] >= 0.80
+
+    # P2/P3：叠加 API 重排，MRR 目标 ≥ 0.80
+    reranked = get_retriever("hybrid", k=20, rerank=True, top_n=5)
+    rerank_report = evaluate_retrieval(
+        reranked.invoke, records, k=5, top_n=20, available_files=available
+    )
+    assert rerank_report["metrics"]["recall@k"] >= 0.80
+    assert rerank_report["metrics"]["mrr"] >= 0.80
