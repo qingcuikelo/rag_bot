@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     check_retry_max: int = 1
 
     # ---------- 存储路径 ----------
+    index_version: int = 1
     chroma_path: Path = Path("storage/chroma")
     sqlite_path: Path = Path("storage/xingchi.db")
     checkpoint_path: Path = Path("storage/checkpoints.sqlite")
@@ -91,6 +92,7 @@ class Settings(BaseSettings):
     jwt_secret: str = Field(default="change-me")
     jwt_ttl_minutes: int = 60
     service_api_key: str = ""
+    pii_salt: str = "xingchi-pii-salt"
 
     # ---------- 运行时 ----------
     human_handoff_enabled: bool = True
