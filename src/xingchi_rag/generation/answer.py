@@ -6,6 +6,7 @@ LCEL 生成结构化回复，并对引用/数值做 groundedness 校验。
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from langchain_core.documents import Document
@@ -16,6 +17,7 @@ from pydantic import BaseModel, Field
 from xingchi_rag.generation.prompts import get_prompt, render
 
 GENERATE_PROMPT = "generate.v1"
+GENERATE_STREAM_PROMPT = "generate_stream.v1"
 MAX_EVIDENCE_CHARS = 700
 GENERATION_FALLBACK = "抱歉，回答生成服务暂时不可用，请稍后重试或联系人工客服 400-820-6688。"
 
@@ -178,3 +180,67 @@ def generate_answer(
         return GeneratedAnswer.model_validate(payload), version
     except Exception:  # 非 JSON 文本 -> 原样返回
         return GeneratedAnswer(answer=str(text), citations=[], refused=False), version
+
+
+def build_stream_messages(
+    question: str,
+    documents: list[Document],
+    *,
+    profile: str = "",
+    strict: bool = False,
+) -> list[tuple[str, str]]:
+    """构建流式生成消息（文本模式，非 JSON）。"""
+    template, _ = get_prompt(GENERATE_STREAM_PROMPT)
+    system = render(
+        template,
+        question=question,
+        evidence=format_evidence(documents),
+        profile=profile or "（无）",
+    )
+    messages: list[tuple[str, str]] = [("system", system)]
+    if strict:
+        messages.append(("human", "只使用证据中的数字与来源；无法在证据中找到的数字不得出现。"))
+    return messages
+
+
+def stream_answer(
+    llm: BaseChatModel,
+    question: str,
+    documents: list[Document],
+    *,
+    profile: str = "",
+    strict: bool = False,
+) -> Iterator[str]:
+    """流式生成（逐 token 产出纯文本增量）。"""
+    messages = build_stream_messages(question, documents, profile=profile, strict=strict)
+    try:
+        for chunk in llm.stream(messages):
+            text = chunk.content
+            if text:
+                yield str(text)
+    except Exception as exc:
+        logger.error(f"流式生成失败: {type(exc).__name__} {exc}")
+        yield GENERATION_FALLBACK
+
+
+def extract_citations_from_text(answer: str, documents: list[Document]) -> list[CitationModel]:
+    """从流式文本中解析 ``[来源: 文件 · 章节]`` 并映射到证据 chunk。"""
+    citations: list[CitationModel] = []
+    seen: set[tuple[str, str | None]] = set()
+    for match in _CITATION_RE.finditer(answer or ""):
+        source_file = match.group(1).strip()
+        section = (match.group(2) or "").strip() or None
+        if (source_file, section) in seen:
+            continue
+        chunk_id = ""
+        for doc in documents:
+            if str(doc.metadata.get("source_file", "")) != source_file:
+                continue
+            doc_section = str(doc.metadata.get("section") or "")
+            if section and not (section in doc_section or section in doc.page_content):
+                continue
+            chunk_id = str(doc.metadata.get("chunk_id") or "")
+            break
+        seen.add((source_file, section))
+        citations.append(CitationModel(source_file=source_file, section=section, chunk_id=chunk_id))
+    return citations

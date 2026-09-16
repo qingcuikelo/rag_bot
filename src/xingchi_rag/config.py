@@ -107,6 +107,11 @@ class Settings(BaseSettings):
     llm_timeout_s: int = 60
     log_level: str = "INFO"
 
+    # ---------- 缓存（高频问答）----------
+    cache_enabled: bool = True
+    cache_ttl_s: int = 300
+    cache_max_size: int = 256
+
     # ---------- 派生属性 ----------
     @property
     def project_root(self) -> Path:

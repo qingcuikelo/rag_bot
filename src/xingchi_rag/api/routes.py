@@ -7,10 +7,11 @@ import time
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.responses import StreamingResponse
+from langchain_core.documents import Document
 from loguru import logger
 
 from xingchi_rag.api.deps import resolve_customer_id, verify_service_key
@@ -24,9 +25,16 @@ from xingchi_rag.api.schemas import (
     ResumeRequest,
 )
 from xingchi_rag.config import get_settings
+from xingchi_rag.generation.answer import (
+    check_grounded,
+    extract_citations_from_text,
+    stream_answer,
+)
 from xingchi_rag.graph.build import get_graph
+from xingchi_rag.graph.state import GraphState
 from xingchi_rag.observability import increment, metrics_snapshot, record_latency
 from xingchi_rag.security import sanitize_output
+from xingchi_rag.utils.cache import cache_key, get_answer_cache
 
 router = APIRouter(prefix="/v1")
 
@@ -145,10 +153,25 @@ def metrics() -> dict[str, Any]:
 
 @router.post("/chat", response_model=ChatResponse, dependencies=[Depends(verify_service_key)])
 def chat(request: ChatRequest) -> ChatResponse:
-    """一次性问答。"""
+    """一次性问答（高频问题命中缓存）。"""
     started = time.perf_counter()
     session_id = request.session_id or str(uuid.uuid4())
     customer_id = resolve_customer_id(request.customer_token)
+
+    settings = get_settings()
+    use_cache = settings.cache_enabled and customer_id is None
+    key = cache_key(request.message)
+    if use_cache:
+        cached = get_answer_cache().get(key)
+        if cached is not None:
+            increment("cache_hit")
+            return ChatResponse(
+                session_id=session_id,
+                latency_ms=int((time.perf_counter() - started) * 1000),
+                **cached,
+            )
+        increment("cache_miss")
+
     try:
         state = _run_graph(request.message, session_id, customer_id)
     except Exception as exc:
@@ -161,7 +184,11 @@ def chat(request: ChatRequest) -> ChatResponse:
             route="error",
             latency_ms=int((time.perf_counter() - started) * 1000),
         )
-    return _to_response(state, session_id, started)
+
+    response = _to_response(state, session_id, started)
+    if use_cache and not response.refused and not response.handoff and response.answer:
+        get_answer_cache().set(key, _cache_payload(response))
+    return response
 
 
 @router.post(
@@ -187,44 +214,115 @@ def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-@router.post("/chat/stream", dependencies=[Depends(verify_service_key)])
-def chat_stream(request: ChatRequest) -> StreamingResponse:
-    """SSE 流式问答：route → token → citations → done。"""
-    session_id = request.session_id or str(uuid.uuid4())
-    customer_id = resolve_customer_id(request.customer_token)
+def _cache_payload(response: ChatResponse) -> dict[str, Any]:
+    return {
+        "answer": response.answer,
+        "citations": [c.model_dump() for c in response.citations],
+        "refused": response.refused,
+        "route": response.route,
+        "prompt_version": response.prompt_version,
+    }
 
-    def event_stream() -> Iterator[str]:
-        started = time.perf_counter()
-        try:
-            state = _run_graph(request.message, session_id, customer_id)
-        except Exception as exc:
-            logger.exception(f"图执行失败: {exc}")
-            increment("error")
-            yield _sse("error", {"message": "服务暂时不可用"})
-            yield _sse("done", {"session_id": session_id})
-            return
 
-        response = _to_response(state, session_id, started)
-        yield _sse("route", {"route": response.route, "session_id": session_id})
-        yield _sse("token", {"delta": response.answer})
-        yield _sse(
-            "citations",
-            {
-                "citations": [c.model_dump() for c in response.citations],
-                "refused": response.refused,
-            },
-        )
+def _stream_events(message: str, session_id: str, customer_id: str | None) -> Iterator[str]:
+    """真流式：复用图节点做理解/检索/判据，再 token 级流式生成（§12.4）。"""
+    from xingchi_rag.graph import nodes
+    from xingchi_rag.providers.llm import get_llm
+
+    started = time.perf_counter()
+    state: dict[str, Any] = {
+        "question": message,
+        "question_raw": message,
+        "history": _history(session_id),
+        "authenticated": customer_id is not None,
+        "customer_id": customer_id,
+        "enable_interrupt": False,
+        "retry": 0,
+        "strict": False,
+    }
+
+    try:
+        state.update(nodes.understand(cast(GraphState, state)))
+        state.update(nodes.router(cast(GraphState, state)))
+        route = str(state.get("route", "unknown"))
+        if route in {"knowledge", "price_stock"}:
+            state.update(nodes.retrieve(cast(GraphState, state)))
+        if route in {"structured", "price_stock"}:
+            state.update(nodes.sql_agent(cast(GraphState, state)))
+        state.update(nodes.grade_merge(cast(GraphState, state)))
+    except Exception as exc:
+        logger.exception(f"流式前置失败: {exc}")
+        increment("error")
+        yield _sse("error", {"message": "服务暂时不可用"})
+        yield _sse("done", {"session_id": session_id})
+        return
+
+    yield _sse("route", {"route": route, "session_id": session_id})
+
+    # 证据不足：直接给出拒答/引导
+    if not state.get("sufficient"):
+        state.update(nodes.refuse_or_human(cast(GraphState, state)))
+        answer = sanitize_output(str(state.get("answer", "")))
+        increment("refused")
+        yield _sse("token", {"delta": answer})
+        yield _sse("citations", {"citations": [], "refused": True})
         yield _sse(
             "done",
             {
                 "session_id": session_id,
-                "prompt_version": response.prompt_version,
-                "latency_ms": response.latency_ms,
-                "handoff": response.handoff,
+                "handoff": bool(state.get("handoff")),
+                "latency_ms": int((time.perf_counter() - started) * 1000),
             },
         )
+        return
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    docs = [
+        Document(page_content=item["page_content"], metadata=dict(item.get("metadata", {})))
+        for item in state.get("evidence") or []
+    ]
+    pieces: list[str] = []
+    try:
+        for token in stream_answer(get_llm(), message, docs, strict=bool(state.get("strict"))):
+            pieces.append(token)
+            yield _sse("token", {"delta": token})
+    except Exception as exc:
+        logger.exception(f"流式生成失败: {exc}")
+        increment("error")
+        yield _sse("error", {"message": "生成中断"})
+
+    answer = "".join(pieces)
+    citations = extract_citations_from_text(answer, docs)
+    ground = check_grounded(answer, citations, docs)
+    increment("answered")
+    record_latency("chat_stream", (time.perf_counter() - started) * 1000)
+    yield _sse(
+        "citations",
+        {
+            "citations": [c.model_dump() for c in citations],
+            "refused": False,
+            "grounded": ground.grounded,
+        },
+    )
+    yield _sse(
+        "done",
+        {
+            "session_id": session_id,
+            "prompt_version": "generate_stream.v1",
+            "latency_ms": int((time.perf_counter() - started) * 1000),
+            "handoff": False,
+        },
+    )
+
+
+@router.post("/chat/stream", dependencies=[Depends(verify_service_key)])
+def chat_stream(request: ChatRequest) -> StreamingResponse:
+    """SSE 真流式问答：route → token（增量） → citations → done。"""
+    session_id = request.session_id or str(uuid.uuid4())
+    customer_id = resolve_customer_id(request.customer_token)
+    return StreamingResponse(
+        _stream_events(request.message, session_id, customer_id),
+        media_type="text/event-stream",
+    )
 
 
 @router.post(

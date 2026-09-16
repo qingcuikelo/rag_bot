@@ -54,3 +54,19 @@ def test_handoff_and_resume(client) -> None:
     )
     assert resumed.status_code == 200
     assert resumed.json()["answer"] == "人工回复：暂不支持"
+
+
+def test_metrics_endpoint(client) -> None:
+    response = client.get("/v1/metrics")
+    assert response.status_code == 200
+    assert "counters" in response.json()
+
+
+def test_chat_stream_refusal(client) -> None:
+    with client.stream("POST", "/v1/chat/stream", json={"message": "支持以旧换新吗？"}) as response:
+        assert response.status_code == 200
+        body = "".join(response.iter_text())
+    assert "event: route" in body
+    assert "event: token" in body
+    assert "event: citations" in body
+    assert "event: done" in body
