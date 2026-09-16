@@ -13,6 +13,7 @@ from loguru import logger
 
 from xingchi_rag.config import get_settings
 from xingchi_rag.generation.answer import (
+    GENERATION_FALLBACK,
     CitationModel,
     check_grounded,
     generate_answer,
@@ -84,7 +85,12 @@ def router(state: GraphState) -> dict[str, Any]:
         return {"route": "unknown"}
     if state.get("pii_request") and not state.get("authenticated"):
         return {"route": "unknown"}
-    return {"route": route_for_intent(state.get("intent", "unknown"))}
+
+    route = route_for_intent(state.get("intent", "unknown"))
+    # 识别到已知型号但意图未命中关键词时，仍走知识检索（§6.2），避免误拒答
+    if route in {"unknown", "chitchat"} and state.get("product_model"):
+        route = "knowledge"
+    return {"route": route}
 
 
 # ----------------------------------------------------------------------
@@ -172,12 +178,21 @@ def grade_merge(state: GraphState) -> dict[str, Any]:
 def generate(state: GraphState) -> dict[str, Any]:
     """基于证据生成结构化回复。"""
     docs = [_to_doc(item) for item in state.get("evidence") or []]
-    result, version = generate_answer(
-        get_llm(),
-        state.get("question", ""),
-        docs,
-        strict=bool(state.get("strict")),
-    )
+    try:
+        result, version = generate_answer(
+            get_llm(),
+            state.get("question", ""),
+            docs,
+            strict=bool(state.get("strict")),
+        )
+    except Exception as exc:
+        logger.error(f"生成节点异常，降级为兜底话术: {type(exc).__name__} {exc}")
+        return {
+            "answer": GENERATION_FALLBACK,
+            "citations": [],
+            "refused": True,
+            "prompt_version": "generate.v1",
+        }
     return {
         "answer": result.answer,
         "citations": [citation.model_dump() for citation in result.citations],

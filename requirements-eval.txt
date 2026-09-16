@@ -1,0 +1,15 @@
+# ============================================================
+# 星驰科技 RAG · 可选评测依赖（RAGAS）
+#
+# 重要：RAGAS 0.4.x 依赖 instructor -> openai<2.0.0，
+#       与主 requirements.txt 的 openai>=3 / langchain-openai>=1.6 冲突。
+#       因此请【不要在主编译环境安装】，而在独立虚拟环境安装本文件：
+#
+#   python -m venv .venv-eval
+#   .venv-eval\Scripts\Activate.ps1
+#   pip install -r requirements-eval.txt
+#
+# 本项目的生成质量评测默认使用内置 LLM-as-Judge（见 eval/generation.py），
+# 无需 RAGAS 即可运行；安装本文件后可用 --use-ragas 切换到 RAGAS 指标。
+# ============================================================
+ragas>=0.4,<0.5

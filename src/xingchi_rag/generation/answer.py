@@ -10,12 +10,14 @@ from dataclasses import dataclass
 
 from langchain_core.documents import Document
 from langchain_core.language_models import BaseChatModel
+from loguru import logger
 from pydantic import BaseModel, Field
 
 from xingchi_rag.generation.prompts import get_prompt, render
 
 GENERATE_PROMPT = "generate.v1"
 MAX_EVIDENCE_CHARS = 700
+GENERATION_FALLBACK = "抱歉，回答生成服务暂时不可用，请稍后重试或联系人工客服 400-820-6688。"
 
 # 引用形如 [来源: 文件名 · 章节]
 _CITATION_RE = re.compile(r"\[来源:\s*([^\]·]+?)\s*(?:·\s*([^\]]+?))?\s*\]")
@@ -154,13 +156,19 @@ def generate_answer(
         structured = llm.with_structured_output(GeneratedAnswer)
         result = structured.invoke(messages)
         return GeneratedAnswer.model_validate(result), version
-    except Exception:
-        # 降级：解析纯文本 JSON；再不行则原样返回
-        text = llm.invoke(messages).content
-        try:
-            import json
+    except Exception as exc:  # 结构化输出不可用/超时 -> 纯文本兜底
+        logger.warning(f"结构化生成失败({type(exc).__name__})，降级为文本模式")
 
-            payload = json.loads(str(text))
-            return GeneratedAnswer.model_validate(payload), version
-        except Exception:
-            return GeneratedAnswer(answer=str(text), citations=[], refused=False), version
+    try:
+        text = llm.invoke(messages).content
+    except Exception as exc:  # 生成服务不可用 -> 明确降级，不抛出
+        logger.error(f"生成服务不可用: {type(exc).__name__} {exc}")
+        return GeneratedAnswer(answer=GENERATION_FALLBACK, citations=[], refused=True), version
+
+    try:
+        import json
+
+        payload = json.loads(str(text))
+        return GeneratedAnswer.model_validate(payload), version
+    except Exception:  # 非 JSON 文本 -> 原样返回
+        return GeneratedAnswer(answer=str(text), citations=[], refused=False), version
