@@ -19,11 +19,13 @@ import uvicorn  # noqa: E402
 
 from xingchi_rag.config import get_settings  # noqa: E402
 from xingchi_rag.logging import setup_logging  # noqa: E402
+from xingchi_rag.observability import setup_tracing  # noqa: E402
 
 
 def main() -> int:
     settings = get_settings()
     setup_logging(settings.log_level)
+    setup_tracing()
 
     parser = argparse.ArgumentParser(description="启动星驰 RAG API")
     parser.add_argument("--host", default="127.0.0.1")

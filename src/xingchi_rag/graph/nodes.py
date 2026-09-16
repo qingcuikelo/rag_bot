@@ -22,6 +22,7 @@ from xingchi_rag.graph.intent import classify_intent, is_pii_request, route_for_
 from xingchi_rag.graph.state import Evidence, GraphState
 from xingchi_rag.providers.llm import get_llm
 from xingchi_rag.retrieval.factory import get_retriever
+from xingchi_rag.security import INJECTION_TEXT, detect_prompt_injection
 from xingchi_rag.sql.agent import execute_select, run_sql_agent
 from xingchi_rag.utils.naming import (
     ambiguous_options,
@@ -45,6 +46,13 @@ CHITCHAT_TEXT = (
 )
 SQL_SOURCE = "结构化数据库"
 
+# 指代词（多轮改写触发）
+_PRONOUNS = ("它", "这个", "该款", "这款", "那款", "此款", "该型号", "这型号")
+
+
+def _needs_rewrite(question: str) -> bool:
+    return any(pronoun in question for pronoun in _PRONOUNS)
+
 
 def _to_doc(evidence: Evidence) -> Document:
     return Document(
@@ -60,19 +68,31 @@ def _to_evidence(doc: Document) -> Evidence:
 # 查询理解与路由
 # ----------------------------------------------------------------------
 def understand(state: GraphState) -> dict[str, Any]:
-    """改写/意图分类/型号归一。"""
+    """改写/意图分类/型号归一（含轻量多轮指代消解，§6.4）。"""
     question = state.get("question") or state.get("question_raw") or ""
-    intent = classify_intent(question)
+    history = state.get("history") or ""
+
     model = normalize_model(question)
-    unknown_model = detect_unknown_model(question)
-    options = ambiguous_options(question) if intent in {"product_spec", "price_stock"} else None
+    standalone_query = question
+    if model is None and history and _needs_rewrite(question):
+        history_model = normalize_model(history)
+        if history_model:
+            model = history_model
+            standalone_query = f"{history} {question}"
+
+    intent = classify_intent(standalone_query)
+    unknown_model = detect_unknown_model(standalone_query)
+    options = (
+        ambiguous_options(standalone_query) if intent in {"product_spec", "price_stock"} else None
+    )
     return {
-        "standalone_query": question,
+        "standalone_query": standalone_query,
         "intent": intent,
         "product_model": model,
         "product_model_explicit": model is not None,
         "unknown_model": unknown_model,
         "pii_request": is_pii_request(question),
+        "injection": detect_prompt_injection(question),
         "options": options,
         "retry": state.get("retry", 0),
         "strict": state.get("strict", False),
@@ -81,6 +101,8 @@ def understand(state: GraphState) -> dict[str, Any]:
 
 def router(state: GraphState) -> dict[str, Any]:
     """决定路由（写入 state，条件边据此分流）。"""
+    if state.get("injection"):
+        return {"route": "unknown"}
     if state.get("unknown_model"):
         return {"route": "unknown"}
     if state.get("pii_request") and not state.get("authenticated"):
@@ -237,26 +259,50 @@ def _build_disambiguation(options: list[str]) -> str:
 
 
 def refuse_or_human(state: GraphState) -> dict[str, Any]:
-    """拒答 / 消歧 / 引导人工。"""
+    """拒答 / 消歧 / 引导人工（可选 interrupt 转人工）。"""
     unknown_model = state.get("unknown_model")
     options = state.get("options") or []
     route = state.get("route")
 
-    if unknown_model:
+    if state.get("injection"):
+        answer = INJECTION_TEXT
+        reason = "prompt_injection"
+    elif unknown_model:
         answer = UNKNOWN_MODEL_TEXT.format(model=unknown_model)
+        reason = "unknown_model"
     elif state.get("pii_request") and not state.get("authenticated"):
         answer = PII_TEXT
+        reason = "auth_required"
     elif route == "chitchat":
         answer = CHITCHAT_TEXT
+        reason = "chitchat"
     elif options:
         answer = _build_disambiguation(options)
+        reason = "disambiguation"
     else:
         answer = REFUSAL_TEXT
+        reason = "insufficient_evidence"
+
+    handoff = route not in {"chitchat"}
+
+    # 人在环：开启转人工且调用方允许中断时，挂起等待人工回复（§8.4）
+    if handoff and get_settings().human_handoff_enabled and state.get("enable_interrupt"):
+        from langgraph.types import interrupt
+
+        human_reply = interrupt({"reason": reason, "suggested_reply": answer})
+        if human_reply:
+            return {
+                "answer": str(human_reply),
+                "citations": [],
+                "refused": False,
+                "grounded": True,
+                "handoff": True,
+            }
 
     return {
         "answer": answer,
         "citations": [],
         "refused": True,
         "grounded": True,
-        "handoff": route not in {"chitchat"},
+        "handoff": handoff,
     }

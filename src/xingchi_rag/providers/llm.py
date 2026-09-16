@@ -24,7 +24,7 @@ def _primary(settings: Settings) -> BaseChatModel:
             base_url=settings.openai_base_url or None,
             api_key=api_key,
             temperature=0,
-            timeout=settings.request_timeout_s,
+            timeout=settings.llm_timeout_s,
         )
     if settings.llm_provider == LLMProvider.OLLAMA:
         return ChatOllama(model=settings.ollama_model, base_url=settings.ollama_base_url)

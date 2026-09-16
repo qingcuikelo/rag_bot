@@ -104,6 +104,7 @@ class Settings(BaseSettings):
     # ---------- 运行时 ----------
     human_handoff_enabled: bool = True
     request_timeout_s: int = 30
+    llm_timeout_s: int = 60
     log_level: str = "INFO"
 
     # ---------- 派生属性 ----------

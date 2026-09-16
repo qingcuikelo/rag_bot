@@ -39,3 +39,18 @@ def test_feedback_accepted(client) -> None:
     response = client.post("/v1/feedback", json={"session_id": "s1", "rating": 5})
     assert response.status_code == 200
     assert response.json()["accepted"] is True
+
+
+def test_handoff_and_resume(client) -> None:
+    session_id = "session-handoff-1"
+    first = client.post("/v1/chat", json={"message": "支持以旧换新吗？", "session_id": session_id})
+    assert first.status_code == 200
+    body = first.json()
+    assert body["handoff"] is True
+    assert body["refused"] is True
+
+    resumed = client.post(
+        "/v1/chat/resume", json={"session_id": session_id, "message": "人工回复：暂不支持"}
+    )
+    assert resumed.status_code == 200
+    assert resumed.json()["answer"] == "人工回复：暂不支持"

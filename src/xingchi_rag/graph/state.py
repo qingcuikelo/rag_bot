@@ -18,6 +18,7 @@ class GraphState(TypedDict, total=False):
     # 输入
     question: str
     question_raw: str
+    history: str
 
     # 查询理解
     standalone_query: str
@@ -27,11 +28,13 @@ class GraphState(TypedDict, total=False):
     product_model_explicit: bool
     unknown_model: str | None
     pii_request: bool
+    injection: bool
     options: list[str] | None
 
     # 认证
     customer_id: str | None
     authenticated: bool
+    enable_interrupt: bool
 
     # 检索/SQL
     evidence: list[Evidence]

@@ -159,10 +159,16 @@ def generate_answer(
     except Exception as exc:  # 结构化输出不可用/超时 -> 纯文本兜底
         logger.warning(f"结构化生成失败({type(exc).__name__})，降级为文本模式")
 
-    try:
-        text = llm.invoke(messages).content
-    except Exception as exc:  # 生成服务不可用 -> 明确降级，不抛出
-        logger.error(f"生成服务不可用: {type(exc).__name__} {exc}")
+    text: object | None = None
+    last_exc: Exception | None = None
+    for _ in range(2):  # 超时/限流抖动：重试一次
+        try:
+            text = llm.invoke(messages).content
+            break
+        except Exception as exc:
+            last_exc = exc
+    if text is None:
+        logger.error(f"生成服务不可用: {type(last_exc).__name__} {last_exc}")
         return GeneratedAnswer(answer=GENERATION_FALLBACK, citations=[], refused=True), version
 
     try:

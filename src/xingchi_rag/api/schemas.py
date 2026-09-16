@@ -34,6 +34,15 @@ class ChatResponse(BaseModel):
     prompt_version: str = ""
     latency_ms: int = 0
     trace_id: str | None = None
+    handoff: bool = False
+    handoff_reason: str | None = None
+
+
+class ResumeRequest(BaseModel):
+    """人工介入恢复请求（中断转人工）。"""
+
+    session_id: str
+    message: str
 
 
 class FeedbackRequest(BaseModel):
