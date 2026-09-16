@@ -39,7 +39,7 @@ async def _one(
     started = time.perf_counter()
     try:
         response = await client.post(
-            f"{url}/v1/chat", json={"message": question}, headers=headers, timeout=60
+            f"{url}/v1/chat", json={"message": question}, headers=headers, timeout=180
         )
         status = response.status_code
     except Exception:
@@ -52,7 +52,7 @@ async def _run(url: str, requests: int, concurrency: int, service_key: str) -> i
     semaphore = asyncio.Semaphore(concurrency)
     results: list[tuple[int, float]] = []
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(trust_env=False) as client:
 
         async def worker(index: int) -> None:
             async with semaphore:

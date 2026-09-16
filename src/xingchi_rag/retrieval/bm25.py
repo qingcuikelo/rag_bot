@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 
 import jieba
@@ -41,11 +42,13 @@ def build_bm25_retriever(documents: list[Document], k: int | None = None) -> BM2
 def build_bm25_index(documents: list[Document]) -> BM25Retriever:
     """持久化 chunk 并返回 BM25 检索器。"""
     save_documents(documents, _chunks_path())
+    get_bm25_retriever.cache_clear()
     return build_bm25_retriever(documents)
 
 
+@lru_cache(maxsize=8)
 def get_bm25_retriever(k: int | None = None) -> BM25Retriever:
-    """从持久化 chunk 重建 BM25 检索器。"""
+    """从持久化 chunk 重建 BM25 检索器（按 k 缓存，避免每请求重建）。"""
     documents = load_documents(_chunks_path())
     if not documents:
         raise FileNotFoundError(f"BM25 索引缺失，请先构建: {_chunks_path()}")

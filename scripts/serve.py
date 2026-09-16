@@ -31,13 +31,24 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--reload", action="store_true")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=settings.api_workers,
+        help="uvicorn 进程数（>1 时禁用 reload）",
+    )
     args = parser.parse_args()
+
+    reload = args.reload and args.workers <= 1
+    if args.reload and args.workers > 1:
+        print("workers>1 时不支持 --reload，已禁用热重载")
 
     uvicorn.run(
         "xingchi_rag.api.routes:app",
         host=args.host,
         port=args.port,
-        reload=args.reload,
+        reload=reload,
+        workers=args.workers,
         log_config=None,
     )
     return 0

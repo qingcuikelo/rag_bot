@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
 
 from langchain_chroma import Chroma
@@ -78,11 +79,14 @@ def build_vector_store(documents: list[Document], *, reset: bool = True) -> Chro
         _add_batch(store, batch, ids)
         total += len(batch)
         logger.info(f"Chroma 写入进度 {total}/{len(documents)}")
+    # 重建后使缓存的客户端失效，确保查询读取最新 collection
+    get_vector_store.cache_clear()
     return store
 
 
+@lru_cache(maxsize=1)
 def get_vector_store() -> Chroma:
-    """打开已持久化的 Chroma（不重置）。"""
+    """打开已持久化的 Chroma（不重置）；进程内复用单例客户端。"""
     return _store(reset=False)
 
 

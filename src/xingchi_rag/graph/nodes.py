@@ -20,7 +20,7 @@ from xingchi_rag.generation.answer import (
 )
 from xingchi_rag.graph.intent import classify_intent, is_pii_request, route_for_intent
 from xingchi_rag.graph.state import Evidence, GraphState
-from xingchi_rag.providers.llm import get_llm
+from xingchi_rag.providers.llm import get_llm, llm_slot
 from xingchi_rag.retrieval.factory import get_retriever
 from xingchi_rag.security import INJECTION_TEXT, detect_prompt_injection
 from xingchi_rag.sql.agent import execute_select, run_sql_agent
@@ -157,7 +157,12 @@ def retrieve(state: GraphState) -> dict[str, Any]:
 
 def sql_agent(state: GraphState) -> dict[str, Any]:
     """结构化查询（Text2SQL）。"""
-    text, success = run_sql_agent(state.get("question", ""))
+    try:
+        with llm_slot():
+            text, success = run_sql_agent(state.get("question", ""))
+    except TimeoutError:
+        logger.warning("SQL Agent 槽位繁忙")
+        return {"sql_result": "结构化查询繁忙，请稍后重试", "sql_sufficient": False}
     return {"sql_result": text, "sql_sufficient": bool(success and text)}
 
 
@@ -201,12 +206,21 @@ def generate(state: GraphState) -> dict[str, Any]:
     """基于证据生成结构化回复。"""
     docs = [_to_doc(item) for item in state.get("evidence") or []]
     try:
-        result, version = generate_answer(
-            get_llm(),
-            state.get("question", ""),
-            docs,
-            strict=bool(state.get("strict")),
-        )
+        with llm_slot():
+            result, version = generate_answer(
+                get_llm(),
+                state.get("question", ""),
+                docs,
+                strict=bool(state.get("strict")),
+            )
+    except TimeoutError:
+        logger.warning("生成槽位繁忙，返回兜底话术")
+        return {
+            "answer": GENERATION_FALLBACK,
+            "citations": [],
+            "refused": True,
+            "prompt_version": "generate.v1",
+        }
     except Exception as exc:
         logger.error(f"生成节点异常，降级为兜底话术: {type(exc).__name__} {exc}")
         return {

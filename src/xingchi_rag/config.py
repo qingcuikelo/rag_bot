@@ -106,6 +106,10 @@ class Settings(BaseSettings):
     request_timeout_s: int = 30
     llm_timeout_s: int = 60
     log_level: str = "INFO"
+    # LLM 并发上限（信号量）；SQLite 写锁等待；API 进程数
+    llm_max_concurrency: int = 4
+    sqlite_busy_timeout_ms: int = 5000
+    api_workers: int = 1
 
     # ---------- 缓存（高频问答）----------
     cache_enabled: bool = True

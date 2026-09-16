@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
-from functools import lru_cache
+import threading
 from typing import Any, Literal
 
 from langgraph.graph import END, START, StateGraph
@@ -73,15 +74,20 @@ def build_state_graph() -> StateGraph:
     return builder
 
 
-@lru_cache(maxsize=1)
-def get_checkpointer() -> Any:
-    """SQLite 会话检查点（按 ``thread_id`` 持久化）。"""
+def new_checkpointer() -> Any:
+    """为当前线程创建独立的 SQLite 检查点连接（并发安全，§并发优化）。"""
     from langgraph.checkpoint.sqlite import SqliteSaver
 
     settings = get_settings()
     path = settings.resolve(settings.checkpoint_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), check_same_thread=False)
+    conn = sqlite3.connect(
+        str(path),
+        check_same_thread=False,
+        timeout=settings.sqlite_busy_timeout_ms / 1000,
+    )
+    conn.execute(f"PRAGMA busy_timeout = {settings.sqlite_busy_timeout_ms}")
+    conn.execute("PRAGMA journal_mode = WAL")
     saver = SqliteSaver(conn)
     saver.setup()
     return saver
@@ -93,11 +99,38 @@ def build_graph(checkpointer: Any | None = None, *, with_checkpointer: bool = Tr
     if checkpointer is not None:
         return builder.compile(checkpointer=checkpointer)
     if with_checkpointer:
-        return builder.compile(checkpointer=get_checkpointer())
+        return builder.compile(checkpointer=new_checkpointer())
     return builder.compile()
 
 
-@lru_cache(maxsize=1)
+_thread_local = threading.local()
+
+
 def get_graph() -> Any:
-    """返回缓存的生产图（含 SqliteSaver）。"""
-    return build_graph()
+    """返回当前线程的生产图（每线程独立检查点连接，避免跨线程共享连接）。
+
+    以检查点路径为键缓存，配置/存储路径变化时自动重建。
+    """
+    settings = get_settings()
+    key = str(settings.resolve(settings.checkpoint_path))
+    cache: dict[str, Any] | None = getattr(_thread_local, "graphs", None)
+    if cache is None:
+        cache = {}
+        _thread_local.graphs = cache
+    graph = cache.get(key)
+    if graph is None:
+        graph = build_graph(checkpointer=new_checkpointer())
+        cache[key] = graph
+    return graph
+
+
+def reset_graph() -> None:
+    """释放当前线程的全部图/检查点连接（测试与配置变更用）。"""
+    cache: dict[str, Any] = getattr(_thread_local, "graphs", None) or {}
+    for graph in cache.values():
+        saver = getattr(graph, "checkpointer", None)
+        conn = getattr(saver, "conn", None)
+        if conn is not None:
+            with contextlib.suppress(Exception):
+                conn.close()
+    _thread_local.graphs = {}

@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from functools import lru_cache
 
 from langchain_core.language_models import BaseChatModel
@@ -14,6 +17,43 @@ from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
 from xingchi_rag.config import LLMProvider, Settings, get_settings
+
+_LLM_SEMAPHORE: threading.Semaphore | None = None
+_SEMAPHORE_LOCK = threading.Lock()
+
+
+def _semaphore() -> threading.Semaphore:
+    global _LLM_SEMAPHORE
+    if _LLM_SEMAPHORE is None:
+        with _SEMAPHORE_LOCK:
+            if _LLM_SEMAPHORE is None:
+                limit = max(1, get_settings().llm_max_concurrency)
+                _LLM_SEMAPHORE = threading.Semaphore(limit)
+    return _LLM_SEMAPHORE
+
+
+@contextmanager
+def llm_slot(timeout: float | None = None) -> Iterator[None]:
+    """LLM 并发信号量：限制同时进行的模型调用，避免线程池/供应商被打满。
+
+    Raises:
+        TimeoutError: 在超时时间内未获得槽位。
+    """
+    sem = _semaphore()
+    budget = timeout if timeout is not None else float(get_settings().request_timeout_s)
+    if not sem.acquire(timeout=budget):
+        raise TimeoutError("LLM 并发已满，等待槽位超时")
+    try:
+        yield
+    finally:
+        sem.release()
+
+
+def reset_llm_limiter() -> None:
+    """重置信号量（配置变更/测试用）。"""
+    global _LLM_SEMAPHORE
+    with _SEMAPHORE_LOCK:
+        _LLM_SEMAPHORE = None
 
 
 def _primary(settings: Settings) -> BaseChatModel:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 import uuid
 from collections.abc import Iterator
@@ -37,6 +38,19 @@ from xingchi_rag.security import sanitize_output
 from xingchi_rag.utils.cache import cache_key, get_answer_cache
 
 router = APIRouter(prefix="/v1")
+
+# 会话级锁：串行化同一 session_id 的请求，避免检查点状态互相覆盖
+_SESSION_LOCKS: dict[str, threading.Lock] = {}
+_SESSION_LOCKS_GUARD = threading.Lock()
+
+
+def _session_lock(session_id: str) -> threading.Lock:
+    with _SESSION_LOCKS_GUARD:
+        lock = _SESSION_LOCKS.get(session_id)
+        if lock is None:
+            lock = threading.Lock()
+            _SESSION_LOCKS[session_id] = lock
+        return lock
 
 
 def _initial_state(message: str, customer_id: str | None, history: str = "") -> dict[str, Any]:
@@ -173,7 +187,8 @@ def chat(request: ChatRequest) -> ChatResponse:
         increment("cache_miss")
 
     try:
-        state = _run_graph(request.message, session_id, customer_id)
+        with _session_lock(session_id):
+            state = _run_graph(request.message, session_id, customer_id)
     except Exception as exc:
         logger.exception(f"图执行失败: {exc}")
         increment("error")
@@ -200,7 +215,8 @@ def chat_resume(request: ResumeRequest) -> ChatResponse:
 
     started = time.perf_counter()
     try:
-        state = get_graph().invoke(Command(resume=request.message), _config(request.session_id))
+        with _session_lock(request.session_id):
+            state = get_graph().invoke(Command(resume=request.message), _config(request.session_id))
     except Exception as exc:
         logger.warning(f"恢复会话失败: {type(exc).__name__} {exc}")
         raise HTTPException(
@@ -227,7 +243,7 @@ def _cache_payload(response: ChatResponse) -> dict[str, Any]:
 def _stream_events(message: str, session_id: str, customer_id: str | None) -> Iterator[str]:
     """真流式：复用图节点做理解/检索/判据，再 token 级流式生成（§12.4）。"""
     from xingchi_rag.graph import nodes
-    from xingchi_rag.providers.llm import get_llm
+    from xingchi_rag.providers.llm import get_llm, llm_slot
 
     started = time.perf_counter()
     state: dict[str, Any] = {
@@ -282,9 +298,14 @@ def _stream_events(message: str, session_id: str, customer_id: str | None) -> It
     ]
     pieces: list[str] = []
     try:
-        for token in stream_answer(get_llm(), message, docs, strict=bool(state.get("strict"))):
-            pieces.append(token)
-            yield _sse("token", {"delta": token})
+        with llm_slot():
+            for token in stream_answer(get_llm(), message, docs, strict=bool(state.get("strict"))):
+                pieces.append(token)
+                yield _sse("token", {"delta": token})
+    except TimeoutError:
+        logger.warning("流式生成槽位繁忙")
+        increment("error")
+        yield _sse("error", {"message": "生成服务繁忙，请稍后重试"})
     except Exception as exc:
         logger.exception(f"流式生成失败: {exc}")
         increment("error")

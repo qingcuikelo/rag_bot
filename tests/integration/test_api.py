@@ -5,14 +5,14 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from xingchi_rag.graph.build import get_graph
+from xingchi_rag.graph.build import reset_graph
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
 def client(isolated_storage):
-    get_graph.cache_clear()
+    reset_graph()
     from xingchi_rag.api.routes import app
 
     return TestClient(app)
