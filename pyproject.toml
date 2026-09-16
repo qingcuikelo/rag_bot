@@ -8,7 +8,12 @@ version = "0.1.0"
 description = "星驰科技 RAG 智能客服（LangChain + LangGraph）"
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
-license = { text = "Proprietary" }
+license = { text = "MIT" }
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+]
 
 [tool.setuptools]
 package-dir = { "" = "src" }
